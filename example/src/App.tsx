@@ -1,8 +1,11 @@
-//App.tsx
-import { Button } from "speedai-react-ui";
+import { FloatingChatBox } from "speedai-react-ui";
 
 function App() {
-  return <Button text="Button" />;
+  return (
+    <>
+      <FloatingChatBox />
+    </>
+  );
 }
 
 export default App;
