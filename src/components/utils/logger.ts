@@ -3,24 +3,24 @@ export const logger = {
     console.error(message, error);
 
     // Prepare log data
-    const logData = {
-      message,
-      error: error ? error.toString() : undefined,
-      timestamp: new Date().toISOString(),
-    };
+    // const logData = {
+    //   message,
+    //   error: error ? error.toString() : undefined,
+    //   timestamp: new Date().toISOString(),
+    // };
 
-    // Send log data to the server
-    try {
-      await fetch("https://your-server-endpoint.com/logs", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(logData),
-      });
-    } catch (sendError) {
-      console.error("Failed to send log to server:", sendError);
-    }
+    // // Send log data to the server
+    // try {
+    //   await fetch("https://your-server-endpoint.com/logs", {
+    //     method: "POST",
+    //     headers: {
+    //       "Content-Type": "application/json",
+    //     },
+    //     body: JSON.stringify(logData),
+    //   });
+    // } catch (sendError) {
+    //   console.error("Failed to send log to server:", sendError);
+    // }
   },
 
   // Add other log levels as needed (info, warn, etc.)

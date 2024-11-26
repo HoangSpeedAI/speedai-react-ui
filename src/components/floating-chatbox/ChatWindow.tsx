@@ -133,6 +133,9 @@ interface ChatWindowProps {
 
 const ChatWindow: React.FC<ChatWindowProps> = ({ onClose, theme, userId }) => {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [currentBotMessage, setCurrentBotMessage] = useState<Message | null>(
+    null,
+  );
   const [input, setInput] = useState("");
   const [isClosing, setIsClosing] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -203,6 +206,43 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ onClose, theme, userId }) => {
     }
   };
 
+  const readStream = async (
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    decoder: TextDecoder,
+    botMessage: Message,
+  ) => {
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split("\n");
+
+        lines.forEach((line) => {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6);
+            if (data === "[DONE]") {
+              // Response is complete
+              setMessages((prevMessages) => [...prevMessages, botMessage]);
+              setCurrentBotMessage(null);
+            } else {
+              try {
+                const parsed = JSON.parse(data);
+                botMessage.content += parsed.text;
+                setCurrentBotMessage({ ...botMessage });
+              } catch (error) {
+                console.error("Error parsing JSON:", error);
+              }
+            }
+          }
+        });
+      }
+    } catch (error) {
+      console.error("Error reading stream:", error);
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!input.trim()) return;
 
@@ -215,41 +255,55 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ onClose, theme, userId }) => {
     setMessages((prevMessages) => [...prevMessages, userMessage]);
     setInput("");
 
-    let botResponse: Message;
-
     if (config.offlineMode) {
-      botResponse = {
+      const botResponse: Message = {
         id: uuidv4(),
         content: config.offlineMessage,
         sender: "bot",
         timestamp: Date.now(),
       };
+      setMessages((prevMessages) => [...prevMessages, botResponse]);
     } else {
       try {
-        const response = await axios.post(config.openAIEndpoint, {
-          prompt: input,
-          userId: userId,
-          sessionId: sessionId.current,
-          // Add other necessary parameters for the OpenAI API
+        const response = await fetch(config.chatEndpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            message: input,
+            userId: userId,
+            sessionId: sessionId.current,
+          }),
         });
-        botResponse = {
+
+        if (!response.ok) {
+          throw new Error("Network response was not ok");
+        }
+
+        const reader = response.body!.getReader();
+        const decoder = new TextDecoder();
+
+        const newBotMessage: Message = {
           id: uuidv4(),
-          content: response.data.choices[0].text,
+          content: "",
           sender: "bot",
           timestamp: Date.now(),
         };
+        setCurrentBotMessage(newBotMessage);
+
+        await readStream(reader, decoder, newBotMessage);
       } catch (error) {
-        logger.error("Error fetching response from OpenAI:", error);
-        botResponse = {
+        logger.error("Error fetching response from chat endpoint:", error);
+        const errorMessage: Message = {
           id: uuidv4(),
           content: "An error occurred. Please try again.",
           sender: "bot",
           timestamp: Date.now(),
         };
+        setMessages((prevMessages) => [...prevMessages, errorMessage]);
       }
     }
-
-    setMessages((prevMessages) => [...prevMessages, botResponse]);
   };
 
   const handleLikeDislike = (messageId: string, action: "like" | "dislike") => {
@@ -271,7 +325,11 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ onClose, theme, userId }) => {
     <ChatWindowWrapper
       ref={wrapperRef}
       theme={theme}
-      style={{ transform: isClosing ? "translateY(100%)" : "translateY(0)" }}
+      style={{
+        transform: isClosing ? "translateY(100%)" : "translateY(0)",
+        opacity: isClosing ? 0 : 1,
+        transition: "transform 0.3s ease-out, opacity 0.3s ease-out",
+      }}
     >
       <ChatHeader theme={theme}>
         <span>Chat</span>
@@ -301,6 +359,13 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ onClose, theme, userId }) => {
             )}
           </MessageContainer>
         ))}
+        {currentBotMessage && (
+          <MessageContainer sender="bot">
+            <MessageBubble sender="bot">
+              {currentBotMessage.content}
+            </MessageBubble>
+          </MessageContainer>
+        )}
       </ChatBody>
       <ChatInput
         value={input}

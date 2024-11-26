@@ -1,6 +1,6 @@
 export default {
-  offlineMode: true,
+  offlineMode: false,
   offlineMessage: "Not available, please try again later",
-  openAIEndpoint: "https://api.openai.com/v1/engines/davinci-codex/completions",
-  sessionUploadEndpoint: "https://your-backend-api.com/upload-session",
+  chatEndpoint: "http://localhost:3001/chat",
+  sessionUploadEndpoint: "http://localhost:3000/upload-session",
 };

@@ -2,6 +2,9 @@
 
 A collection of reusable React components for building AI-powered user interfaces.
 
+## List Components
+- Floating Chatbox
+
 ## Installation
 
 To install the dependencies, run the following command in both the root directory and the `example` directory:
