@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import styled, { DefaultTheme, keyframes } from "styled-components";
 import ChatWindow from "./ChatWindow";
+import config from "./config";
 
 const pulseAnimation = keyframes`
   0% {
@@ -45,8 +46,13 @@ interface FloatingButtonProps {
 
 const FloatingButton: React.FC<FloatingButtonProps> = ({ theme }) => {
   const [isOpen, setIsOpen] = useState<boolean>(false);
+  const userId = "user1";
 
   const toggleChat = () => setIsOpen(!isOpen);
+
+  const handleClose = () => {
+    console.log("ChatWindow closes");
+  };
 
   return (
     <>
@@ -56,7 +62,23 @@ const FloatingButton: React.FC<FloatingButtonProps> = ({ theme }) => {
         </StyledFloatingButton>
       )}
       {isOpen && (
-        <ChatWindow userId="user1" onClose={toggleChat} theme={theme} />
+        <ChatWindow
+          onClose={handleClose}
+          theme={theme}
+          userId={userId}
+          config={{
+            providerName: config.providerName,
+            showLikeDislike: config.showLikeDislike,
+            showPhotoUpload: config.showPhotoUpload,
+            followUpQuestions: config.followUpQuestions,
+            conversationalStyle: config.conversationalStyle,
+            outputFormat: config.outputFormat,
+            welcomeMsg: config.welcomeMessage,
+            networkFailureMsg: config.networkFailureMsg,
+            sessionUploadEndpoint: config.sessionUploadEndpoint,
+            chatEndpoint: config.chatEndpoint,
+          }}
+        />
       )}
     </>
   );

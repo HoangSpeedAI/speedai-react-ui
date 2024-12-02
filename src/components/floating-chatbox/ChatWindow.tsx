@@ -1,9 +1,17 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useCallback, useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
 import styled, { DefaultTheme, keyframes } from "styled-components";
 import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
-import config from "./config";
 import { logger } from "../utils/logger";
+import {
+  FaTimesCircle,
+  FaExpandArrowsAlt,
+  FaCompressArrowsAlt,
+  FaThumbsUp,
+  FaThumbsDown,
+  FaPlus,
+} from "react-icons/fa";
 
 const slideIn = keyframes`
   from {
@@ -20,8 +28,8 @@ const ChatWindowWrapper = styled.div<{ theme: DefaultTheme }>`
   position: fixed;
   bottom: 20px;
   right: 20px;
-  width: 300px;
-  height: 400px;
+  width: 400px;
+  height: 500px;
   background-color: ${(props) => props.theme.background};
   border-radius: 10px;
   box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
@@ -95,6 +103,10 @@ const MessageBubble = styled.div<{ sender: "user" | "bot" }>`
   align-self: ${(props) =>
     props.sender === "user" ? "flex-end" : "flex-start"};
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+
+  & > * {
+    margin: 0;
+  }
 `;
 
 const FeedbackButtons = styled.div`
@@ -116,6 +128,113 @@ const FeedbackButton = styled.button<{ active?: boolean }>`
   }
 `;
 
+const FullscreenButton = styled.button`
+  background: none;
+  border: none;
+  color: ${(props) => props.theme.text};
+  cursor: pointer;
+  font-size: 20px;
+  margin-right: 10px;
+`;
+
+const LoadingDots = styled.div`
+  display: inline-block;
+  &::after {
+    content: ".";
+    animation: dots 1s steps(5, end) infinite;
+  }
+
+  @keyframes dots {
+    0%,
+    20% {
+      content: ".";
+    }
+    40% {
+      content: "..";
+    }
+    60% {
+      content: "...";
+    }
+    80%,
+    100% {
+      content: "";
+    }
+  }
+`;
+
+const FollowUpQuestionButton = styled.button`
+  background-color: transparent;
+  color: ${(props) => props.theme.primary};
+  border: 1px solid ${(props) => props.theme.primary};
+  padding: 5px 5px;
+  margin: 5px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition:
+    background-color 0.2s,
+    color 0.2s;
+  font-size: 0.9em;
+
+  &:hover {
+    background-color: ${(props) => props.theme.primary};
+    color: ${(props) => props.theme.text};
+  }
+`;
+
+const ResizeHandle = styled.div`
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 10px;
+  height: 100%;
+  cursor: ew-resize;
+`;
+
+const ResizeCorner = styled.div`
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 20px;
+  height: 20px;
+  cursor: nwse-resize;
+`;
+
+const ContextMenu = styled.div`
+  position: fixed;
+  background-color: ${(props) => props.theme.background};
+  border: 1px solid ${(props) => props.theme.border};
+  border-radius: 4px;
+  padding: 5px 0;
+  z-index: 1000;
+`;
+
+const ContextMenuItem = styled.div`
+  padding: 5px 10px;
+  cursor: pointer;
+  &:hover {
+    background-color: ${(props) => props.theme.primaryHover};
+  }
+`;
+
+const InputWrapper = styled.div`
+  position: relative;
+  display: flex;
+  align-items: center;
+`;
+
+const AddButton = styled.button`
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: ${(props) => props.theme.primary};
+  cursor: pointer;
+  font-size: 20px;
+  z-index: 1;
+`;
+
 interface Message {
   id: string;
   content: string;
@@ -123,26 +242,59 @@ interface Message {
   liked?: boolean;
   disliked?: boolean;
   timestamp: number;
+  followUpQuestions?: string[];
 }
 
 interface ChatWindowProps {
   onClose: () => void;
   theme: DefaultTheme;
   userId: string;
+  config: {
+    providerName: string;
+    followUpQuestions: number;
+    conversationalStyle: string;
+    outputFormat: string;
+    showLikeDislike: boolean;
+    showPhotoUpload: boolean;
+    networkFailureMsg: string;
+    welcomeMsg: string;
+    sessionUploadEndpoint: string;
+    chatEndpoint: string;
+  };
 }
 
-const ChatWindow: React.FC<ChatWindowProps> = ({ onClose, theme, userId }) => {
+const ChatWindow: React.FC<ChatWindowProps> = ({
+  onClose,
+  theme,
+  userId,
+  config: componentConfig,
+}) => {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [currentBotMessage, setCurrentBotMessage] = useState<Message | null>(
-    null,
-  );
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    messageId: string;
+  } | null>(null);
   const [input, setInput] = useState("");
   const [isClosing, setIsClosing] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [windowSize, setWindowSize] = useState({ width: 400, height: 500 });
   const wrapperRef = useRef<HTMLDivElement>(null);
   const chatBodyRef = useRef<HTMLDivElement>(null);
   const sessionId = useRef(uuidv4());
+  const showFollowUpQuestions = componentConfig.followUpQuestions > 0;
 
   useEffect(() => {
+    setMessages([
+      {
+        id: uuidv4(),
+        content: componentConfig.welcomeMsg,
+        sender: "bot",
+        timestamp: Date.now(),
+      },
+    ]);
+
     const handleClickOutside = (event: MouseEvent) => {
       if (
         wrapperRef.current &&
@@ -159,14 +311,19 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ onClose, theme, userId }) => {
   }, []);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    const handleClickOutside = (event: MouseEvent) => {
+      if (contextMenu && !wrapperRef.current?.contains(event.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [contextMenu]);
 
   useEffect(() => {
-    return () => {
-      saveSession();
-    };
-  }, []);
+    scrollToBottom();
+  }, [messages]);
 
   const scrollToBottom = () => {
     if (chatBodyRef.current) {
@@ -200,7 +357,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ onClose, theme, userId }) => {
 
   const uploadSession = async (sessionData: unknown) => {
     try {
-      await axios.post(config.sessionUploadEndpoint, sessionData);
+      await axios.post(componentConfig.sessionUploadEndpoint, sessionData);
     } catch (error) {
       logger.error("Error uploading session:", error);
     }
@@ -209,8 +366,11 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ onClose, theme, userId }) => {
   const readStream = async (
     reader: ReadableStreamDefaultReader<Uint8Array>,
     decoder: TextDecoder,
-    botMessage: Message,
+    botMessageId: string,
   ) => {
+    let fullResponse = "";
+    let followUpQuestions: string[] = [];
+
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -219,107 +379,224 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ onClose, theme, userId }) => {
         const chunk = decoder.decode(value);
         const lines = chunk.split("\n");
 
-        lines.forEach((line) => {
+        for (const line of lines) {
           if (line.startsWith("data: ")) {
             const data = line.slice(6);
             if (data === "[DONE]") {
               // Response is complete
-              setMessages((prevMessages) => [...prevMessages, botMessage]);
-              setCurrentBotMessage(null);
-            } else {
-              try {
-                const parsed = JSON.parse(data);
-                botMessage.content += parsed.text;
-                setCurrentBotMessage({ ...botMessage });
-              } catch (error) {
-                console.error("Error parsing JSON:", error);
+              setMessages((prevMessages) =>
+                prevMessages.map((msg) =>
+                  msg.id === botMessageId
+                    ? {
+                        ...msg,
+                        content: fullResponse,
+                        followUpQuestions:
+                          followUpQuestions.length > 0
+                            ? followUpQuestions
+                            : undefined,
+                      }
+                    : msg,
+                ),
+              );
+              return;
+            }
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.followUpQuestions) {
+                followUpQuestions = parsed.followUpQuestions;
+              } else {
+                fullResponse += parsed.text || "";
+                setMessages((prevMessages) =>
+                  prevMessages.map((msg) =>
+                    msg.id === botMessageId
+                      ? { ...msg, content: fullResponse }
+                      : msg,
+                  ),
+                );
               }
+            } catch (error) {
+              console.error("Error parsing JSON:", error);
             }
           }
-        });
+        }
       }
     } catch (error) {
       console.error("Error reading stream:", error);
     }
   };
 
-  const handleSendMessage = async () => {
-    if (!input.trim()) return;
+  const handleSendMessage = useCallback(
+    async (message: string = input) => {
+      if (!message.trim()) return;
 
-    const userMessage: Message = {
-      id: uuidv4(),
-      content: input,
-      sender: "user",
-      timestamp: Date.now(),
-    };
-    setMessages((prevMessages) => [...prevMessages, userMessage]);
-    setInput("");
-
-    if (config.offlineMode) {
-      const botResponse: Message = {
+      const userMessage: Message = {
         id: uuidv4(),
-        content: config.offlineMessage,
+        content: message,
+        sender: "user",
+        timestamp: Date.now(),
+      };
+
+      const botMessage: Message = {
+        id: uuidv4(),
+        content: "",
         sender: "bot",
         timestamp: Date.now(),
       };
-      setMessages((prevMessages) => [...prevMessages, botResponse]);
-    } else {
+
+      setMessages((prevMessages) => [...prevMessages, userMessage, botMessage]);
+      setInput("");
+      setIsLoading(true);
+
       try {
-        const response = await fetch(config.chatEndpoint, {
+        const response = await fetch(componentConfig.chatEndpoint, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            message: input,
-            userId: userId,
+            message,
+            userId,
             sessionId: sessionId.current,
+            providerName: componentConfig.providerName,
+            followUpQuestions: componentConfig.followUpQuestions,
+            conversationalStyle: componentConfig.conversationalStyle,
+            outputFormat: componentConfig.outputFormat,
           }),
         });
 
-        if (!response.ok) {
-          throw new Error("Network response was not ok");
-        }
+        if (!response.ok) throw new Error("Network response was not ok");
 
         const reader = response.body!.getReader();
         const decoder = new TextDecoder();
 
-        const newBotMessage: Message = {
-          id: uuidv4(),
-          content: "",
-          sender: "bot",
-          timestamp: Date.now(),
-        };
-        setCurrentBotMessage(newBotMessage);
-
-        await readStream(reader, decoder, newBotMessage);
+        await readStream(reader, decoder, botMessage.id);
       } catch (error) {
         logger.error("Error fetching response from chat endpoint:", error);
-        const errorMessage: Message = {
+        setMessages((prevMessages) =>
+          prevMessages.map((msg) =>
+            msg.id === botMessage.id
+              ? { ...msg, content: componentConfig.networkFailureMsg }
+              : msg,
+          ),
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [input, userId, componentConfig, sessionId],
+  );
+
+  const handleLikeDislike = useCallback(
+    (messageId: string, action: "like" | "dislike") => {
+      setMessages((messages) =>
+        messages.map((msg) =>
+          msg.id === messageId
+            ? {
+                ...msg,
+                liked: action === "like" ? !msg.liked : false,
+                disliked: action === "dislike" ? !msg.disliked : false,
+              }
+            : msg,
+        ),
+      );
+    },
+    [],
+  );
+
+  const toggleFullscreen = useCallback(
+    () => setIsFullscreen((prev) => !prev),
+    [],
+  );
+
+  const handleResize = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startWidth = windowSize.width;
+      const startHeight = windowSize.height;
+
+      const doDrag = (e: MouseEvent) => {
+        setWindowSize({
+          width: startWidth - (e.clientX - startX),
+          height: startHeight - (e.clientY - startY),
+        });
+      };
+
+      const stopDrag = () => {
+        document.removeEventListener("mousemove", doDrag);
+        document.removeEventListener("mouseup", stopDrag);
+      };
+
+      document.addEventListener("mousemove", doDrag);
+      document.addEventListener("mouseup", stopDrag);
+    },
+    [windowSize],
+  );
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent, messageId: string) => {
+      e.preventDefault();
+      const rect = wrapperRef.current?.getBoundingClientRect();
+      if (rect) {
+        setContextMenu({
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+          messageId,
+        });
+      }
+    },
+    [],
+  );
+
+  const handleContextMenuAction = useCallback(
+    (action: string) => {
+      if (!contextMenu) return;
+
+      const message = messages.find((m) => m.id === contextMenu.messageId);
+      if (!message) return;
+
+      switch (action) {
+        case "copy":
+          navigator.clipboard
+            .writeText(message.content)
+            .then(() => console.log("Text copied to clipboard"))
+            .catch((err) => console.error("Failed to copy text: ", err));
+          break;
+        case "share":
+          console.log("Sharing message:", message.content);
+          break;
+      }
+
+      setContextMenu(null);
+    },
+    [contextMenu, messages],
+  );
+
+  const handlePhotoUpload = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append("photo", file);
+
+      try {
+        const response = await axios.post("/api/vision-chat", formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+
+        const botMessage: Message = {
           id: uuidv4(),
-          content: "An error occurred. Please try again.",
+          content: response.data.response,
           sender: "bot",
           timestamp: Date.now(),
         };
-        setMessages((prevMessages) => [...prevMessages, errorMessage]);
+        setMessages((prevMessages) => [...prevMessages, botMessage]);
+      } catch (error) {
+        logger.error("Error uploading photo:", error);
       }
-    }
-  };
-
-  const handleLikeDislike = (messageId: string, action: "like" | "dislike") => {
-    setMessages(
-      messages.map((msg) => {
-        if (msg.id === messageId) {
-          return {
-            ...msg,
-            liked: action === "like" ? !msg.liked : false,
-            disliked: action === "dislike" ? !msg.disliked : false,
-          };
-        }
-        return msg;
-      }),
-    );
-  };
+    },
+    [],
+  );
 
   return (
     <ChatWindowWrapper
@@ -329,51 +606,126 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ onClose, theme, userId }) => {
         transform: isClosing ? "translateY(100%)" : "translateY(0)",
         opacity: isClosing ? 0 : 1,
         transition: "transform 0.3s ease-out, opacity 0.3s ease-out",
+        width: isFullscreen ? "100%" : `${windowSize.width}px`,
+        height: isFullscreen ? "100%" : `${windowSize.height}px`,
       }}
     >
+      <ResizeHandle onMouseDown={handleResize} />
+      <ResizeCorner onMouseDown={handleResize} />
       <ChatHeader theme={theme}>
         <span>Chat</span>
-        <CloseButton onClick={handleClose} theme={theme}>
-          <i className="fas fa-times"></i>
-        </CloseButton>
+        <div>
+          <FullscreenButton onClick={toggleFullscreen} theme={theme}>
+            {isFullscreen ? <FaCompressArrowsAlt /> : <FaExpandArrowsAlt />}
+          </FullscreenButton>
+          <CloseButton onClick={handleClose} theme={theme}>
+            <FaTimesCircle />
+          </CloseButton>
+        </div>
       </ChatHeader>
       <ChatBody ref={chatBodyRef}>
-        {messages.map((msg) => (
+        {messages.map((msg, index) => (
           <MessageContainer key={msg.id} sender={msg.sender}>
-            <MessageBubble sender={msg.sender}>{msg.content}</MessageBubble>
-            {msg.sender === "bot" && (
+            <MessageBubble
+              sender={msg.sender}
+              onContextMenu={(e) => handleContextMenu(e, msg.id)}
+            >
+              <ReactMarkdown>{msg.content}</ReactMarkdown>
+              {contextMenu && contextMenu.messageId === msg.id && (
+                <ContextMenu
+                  style={{ top: contextMenu.y, left: contextMenu.x }}
+                  theme={theme}
+                >
+                  <ContextMenuItem
+                    onClick={() => handleContextMenuAction("copy")}
+                  >
+                    Copy
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onClick={() => handleContextMenuAction("share")}
+                  >
+                    Share
+                  </ContextMenuItem>
+                </ContextMenu>
+              )}
+            </MessageBubble>
+            {componentConfig.showLikeDislike && msg.sender === "bot" && (
               <FeedbackButtons>
                 <FeedbackButton
                   onClick={() => handleLikeDislike(msg.id, "like")}
                   active={msg.liked}
                 >
-                  <i className="fas fa-thumbs-up"></i>
+                  <FaThumbsUp />
                 </FeedbackButton>
                 <FeedbackButton
                   onClick={() => handleLikeDislike(msg.id, "dislike")}
                   active={msg.disliked}
                 >
-                  <i className="fas fa-thumbs-down"></i>
+                  <FaThumbsDown />
                 </FeedbackButton>
               </FeedbackButtons>
             )}
+            {showFollowUpQuestions &&
+              msg.sender === "bot" &&
+              index === messages.length - 1 &&
+              msg.followUpQuestions &&
+              msg.followUpQuestions.length > 0 && (
+                <div>
+                  {msg.followUpQuestions.map((question, index) => (
+                    <FollowUpQuestionButton
+                      key={index}
+                      onClick={() => handleSendMessage(question)}
+                      theme={theme}
+                    >
+                      {question}
+                    </FollowUpQuestionButton>
+                  ))}
+                </div>
+              )}
           </MessageContainer>
         ))}
-        {currentBotMessage && (
+        {isLoading && (
           <MessageContainer sender="bot">
             <MessageBubble sender="bot">
-              {currentBotMessage.content}
+              <LoadingDots />
             </MessageBubble>
           </MessageContainer>
         )}
       </ChatBody>
-      <ChatInput
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
-        placeholder="Type a message..."
-        theme={theme}
-      />
+      <InputWrapper>
+        <ChatInput
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyPress={(e) => e.key === "Enter" && handleSendMessage(input)}
+          placeholder="Type a message..."
+          theme={theme}
+        />
+        {componentConfig.showPhotoUpload && (
+          <AddButton as="label" htmlFor="photo-upload" theme={theme}>
+            <FaPlus />
+            <input
+              id="photo-upload"
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={handlePhotoUpload}
+            />
+          </AddButton>
+        )}
+      </InputWrapper>
+      {contextMenu && (
+        <ContextMenu
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          theme={theme}
+        >
+          <ContextMenuItem onClick={() => handleContextMenuAction("copy")}>
+            Copy
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => handleContextMenuAction("share")}>
+            Share
+          </ContextMenuItem>
+        </ContextMenu>
+      )}
     </ChatWindowWrapper>
   );
 };
